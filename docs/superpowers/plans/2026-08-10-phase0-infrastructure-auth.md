@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**目的：** 在庫管理アプリのデプロイ可能な骨組み（VPS＋Docker Compose＋Spring Boot＋PostgreSQL＋React）を立ち上げ、3種の共通アカウント（管理者/社員/ゲスト）でセッションベースログインができる状態（管理者の初回パスワード変更強制を含む）にする。以降の全フェーズはこの土台の上に機能を積み上げる。
+**目的：** 在庫管理アプリのデプロイ可能な骨組み（Docker Compose＋Spring Boot＋PostgreSQL＋React、本番はRender＋Neon）を立ち上げ、3種の共通アカウント（管理者/社員/ゲスト）でセッションベースログインができる状態（管理者の初回パスワード変更強制を含む）にする。以降の全フェーズはこの土台の上に機能を積み上げる。
 
-**アーキテクチャ：** Spring Bootモノリスが、ビルド済みReact SPAを静的リソースとして同梱配信し、PostgreSQLをバックエンドに持つ。全体を1台のVPS上でDocker Composeにより稼働させる。認証はSpring Securityによるセッションベース（JWTは使わない）。詳細は`docs/superpowers/specs/2026-08-10-inventory-management-architecture-design.md`を参照。
+**アーキテクチャ：** Spring Bootモノリスが、ビルド済みReact SPAを静的リソースとして同梱配信し、PostgreSQLをバックエンドに持つ。開発中はローカルマシン上でDocker Composeにより稼働させ、本番はRender（Webサービス、Starterプラン）＋Neon（Postgres）にデプロイする（2026-08-17変更、旧方針は単一VPS）。認証はSpring Securityによるセッションベース（JWTは使わない）。詳細は`docs/superpowers/specs/2026-08-10-inventory-management-architecture-design.md`を参照。
 
 **技術スタック：** Java 21、Spring Boot 3.3.4（Web／Security／MyBatis）、MyBatis（`mybatis-spring-boot-starter`）、PostgreSQL 16、Flyway、Maven、React 18＋TypeScript＋Vite、Vitest＋Testing Library、Docker Compose、Testcontainers（バックエンドの結合テスト）。
 
@@ -19,7 +19,7 @@
 - ジョブスケジューラ（Quartz等）は導入しない。フェーズ0の処理はすべてリクエスト駆動（アーキテクチャ設計書 §2.3）
 - **バックエンドのレイヤー構成は `mapper → repository → service → controller` の順。mapperはSQLを直接書くinterface（MyBatis）とし、Spring Data JPA／Hibernateは使わない。controllerの入出力はDTOを介する**（アーキテクチャ設計書 §2.5）
 - **パッケージ構成はレイヤー別ディレクトリとする**：`mapper/`・`repository/`・`service/`・`controller/`・`dto/`はそれぞれの層のクラスのみを置く。認証・アカウント関連でどの層にも明確に属さないもの（Security設定、`UserDetailsService`実装、ドメインオブジェクト、例外クラスなど）は`auth/`にまとめる（2026-08-10、フェーズ0計画レビュー時に確定）
-- フェーズ0のデプロイ先：開発中はConoHa VPS（アーキテクチャ設計書 §3.1）
+- フェーズ0のデプロイ先：開発中はローカルマシン上のDocker Composeのみ（無料）。本番はRender（Webサービス）＋Neon（Postgres）（アーキテクチャ設計書 §3.1、2026-08-17変更）
 
 ---
 
@@ -105,40 +105,27 @@ docker-compose.yml
 
 ---
 
-### タスク1：VPS準備とDocker動作確認
+### タスク1：ローカルDocker環境の確認、Render／Neonアカウント準備
 
 **ファイル：** なし（インフラ作業。リポジトリへの変更なし）
 
 **インターフェース：**
-- 成果物：`<VPS_IP>`でSSH接続可能、Docker/Docker Composeがインストール済みのVPS。タスク10のデプロイ手順で使用する。
+- 成果物：ローカルマシンでDocker／Docker Composeが動作する状態。Renderアカウント（GitHubリポジトリ連携済み）とNeonの本番用プロジェクト（接続文字列を取得済み）。タスク10のデプロイ手順で使用する。
 
-このタスクは手動作業です。有料VPSへのサインアップや支払い情報の入力はコーディングエージェントには実行できません。手順1〜4は人間が行い、手順5はSSH接続後にエージェントが検証できます。
+開発は本番デプロイまで一貫してローカルマシンのDocker Composeのみで行う（2026-08-17変更、旧方針はConoHa VPS常時起動）。クラウド環境（Render／Neon）はタスク10の本番デプロイ確認まで課金が発生しない。手順1はエージェントが検証できる。手順2・3はアカウント作成・支払い情報登録を伴うため人間が行う。
 
-- [ ] **手順1（手動・人間が行う）：ConoHa VPSに申し込み、インスタンスを作成する**
+- [ ] **手順1：ローカルマシンでDocker／Docker Composeの動作を確認する**
 
-2GBクラスのインスタンス（Ubuntu 22.04 LTS推奨）を作成し、パブリックIPアドレスを`<VPS_IP>`として控える。
+実行：`docker --version && docker compose version`
+期待結果：両コマンドがエラーなくバージョン番号を出力する。インストールされていなければ、人間がDocker Desktop（またはDocker Engine）を公式サイトからインストールする。
 
-- [ ] **手順2（手動・人間が行う）：SSH公開鍵をインスタンスに登録する**
+- [ ] **手順2（手動・人間が行う）：Renderにサインアップし、GitHubリポジトリと連携する**
 
-ConoHaのコントロールパネルから`~/.ssh/id_ed25519.pub`（または専用のデプロイ鍵）を登録し、パスワードなしでSSHログインできるようにする。
+Render（https://render.com）にサインアップし、このリポジトリのGitHubアカウントと連携しておく。実際のWebサービス作成・環境変数設定はタスク10で行う。
 
-- [ ] **手順3（手動・人間が行う）：VPS上にDocker／Docker Composeをインストールする**
+- [ ] **手順3（手動・人間が行う）：Neonにサインアップし、本番用プロジェクトを作成する**
 
-SSHでログインし、以下を実行する。
-```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-```
-グループ変更を反映させるため、一度ログアウト・再ログインする。最近のDockerには`docker compose`サブコマンドが標準で含まれるため、個別インストールは不要。
-
-- [ ] **手順4（手動・人間が行う）：ConoHaのファイアウォール設定でポート8080を開放する**
-
-ConoHaコントロールパネルのパケットフィルタ設定で、SSH用ポートに加えてTCP 8080番（アプリのポート、タスク10で使用）を全許可にする。
-
-- [ ] **手順5：SSH接続とDockerの動作を確認する**
-
-実行：`ssh <user>@<VPS_IP> "docker --version && docker compose version"`
-期待結果：両コマンドがエラーなくバージョン番号を出力する。
+Neon（https://neon.tech）にサインアップし、本番用プロジェクトを1つ作成する。プロジェクト作成後に表示される接続文字列（`postgresql://<user>:<password>@<host>/<dbname>?sslmode=require`の形式）を控えておく。タスク10でRenderの環境変数として設定する。ローカル開発用のDBはこのNeonプロジェクトとは別に、タスク3で構築するローカルDocker ComposeのPostgreSQLコンテナを使うため、Neon側に開発用ブランチを追加で作る必要はない。
 
 ---
 
@@ -2589,8 +2576,8 @@ git commit -m "feat(frontend): パスワード変更画面・ホーム画面を�
 - 作成：`.env.example`
 
 **インターフェース：**
-- 消費：`backend/`（タスク2〜7）、`frontend/`（タスク8〜9）、タスク1のVPS。
-- 成果物：`http://<VPS_IP>:8080`で到達可能な、ログインフローが動作するアプリ。以降のフェーズはこの成果物に画面を追加していく。
+- 消費：`backend/`（タスク2〜7）、`frontend/`（タスク8〜9）、タスク1のRenderアカウント・Neon接続文字列。
+- 成果物：ローカルでは`http://localhost:8080`、本番ではRenderのHTTPS URL（`https://<render-service-name>.onrender.com`）で到達可能な、ログインフローが動作するアプリ。以降のフェーズはこの成果物に画面を追加していく。
 
 - [ ] **手順1：`Dockerfile`を作成する**
 
@@ -2685,41 +2672,45 @@ curl -i -b /tmp/cookies.txt http://localhost:8080/api/auth/me
 ```
 期待結果：`HTTP/1.1 200`、上記と同じアカウント情報のJSON。
 
-- [ ] **手順6（手動・人間が行う）：タスク1のConoHa VPSにデプロイする**
+- [ ] **手順6（手動・人間が行う）：RenderでWebサービスを作成し、環境変数を設定する**
 
-```bash
-ssh <user>@<VPS_IP>
-git clone git@github.com-bkIkichi:bk-ikichi/StockManagerApp.git
-cd StockManagerApp
-cp .env.example .env
-# .envを編集：DB_PASSWORDをプレースホルダーではなく実際の秘密値に変更する
-docker compose up -d --build
-```
+Renderのダッシュボードで「New Web Service」からこのGitHubリポジトリを選択し、Environment＝Docker（リポジトリルートの`Dockerfile`を使用）としてサービスを作成する。作成時に以下の環境変数を設定する（タスク1で控えたNeonの接続文字列`postgresql://<user>:<password>@<host>/<dbname>?sslmode=require`を分解して設定する）。
 
-- [ ] **手順7：VPS外部からデプロイ済みアプリを確認する**
+| 環境変数 | 値 |
+|---|---|
+| `DB_HOST` | Neon接続文字列の`<host>`部分 |
+| `DB_PORT` | `5432` |
+| `DB_NAME` | Neon接続文字列の`<dbname>`部分 |
+| `DB_USER` | Neon接続文字列の`<user>`部分 |
+| `DB_PASSWORD` | Neon接続文字列の`<password>`部分 |
 
-実行：`curl http://<VPS_IP>:8080/api/health`
-期待結果：`{"status":"ok"}`
+PostgreSQL JDBCドライバはデフォルトで`sslmode=prefer`（SSLが使えれば自動的に使う）のため、Neonとの接続にSSL関連のコード変更は不要。プランは**Starter**（常時起動、コールドスタートなし）を選択する。RenderはHTTPSを自動付与するため、ドメイン取得や証明書設定は不要。
+
+- [ ] **手順7：デプロイ済みアプリのヘルスチェックを確認する**
+
+Renderのビルド・デプロイが完了したら実行：`curl https://<render-service-name>.onrender.com/api/health`
+期待結果：`{"status":"ok"}`（HTTPS接続であることを確認する）
 
 - [ ] **手順8（手動・人間が行う）：ブラウザでの動作確認**
 
-スマホまたはPCのブラウザで`http://<VPS_IP>:8080/login`を開く。
+スマホまたはPCのブラウザで`https://<render-service-name>.onrender.com/login`を開く。
 1. `mg` / `ChangeMe123!`でログイン → パスワード変更画面に遷移することを確認
 2. 新しいパスワードを入力して送信 → ホーム画面（「ロール: ADMIN」表示）に遷移することを確認
 3. ログアウト（現時点ではUIのボタンなし。常設のナビゲーションができる後続フェーズで対応予定のため今回は許容）し、新しいパスワードで再ログインして変更が反映されていることを確認
+4. アドレスバーの鍵マーク（HTTPS）が有効になっていることを確認する
 
 - [ ] **手順9：コミット**
 
 ```bash
 git add Dockerfile docker-compose.yml .env.example
-git commit -m "feat: Docker ComposeでVPSにデプロイできるようパッケージング"
+git commit -m "feat: Docker Composeでローカル開発・Renderへのデプロイをパッケージング"
 ```
 
 ---
 
 ## フェーズ0の完了条件
 
-- 新規VPS上で`docker compose up -d --build`を実行するだけで、手動のDBセットアップなしにスタック全体が起動する（Flyway＋初期アカウント投入で完結）
+- ローカルマシンで`docker compose up -d --build`を実行するだけで、手動のDBセットアップなしにスタック全体が起動する（Flyway＋初期アカウント投入で完結）
 - `mg`／`staff`／`guest`それぞれでログインでき、`mg`のみ初回ログイン時にパスワード変更画面へ強制的に遷移する
 - バックエンドの全テスト（`mvn test`）とフロントエンドの全テスト（`npm test`）が通る
-- VPSのパブリックIPのポート8080でアプリに到達できる
+- RenderのHTTPS URLでアプリに到達でき、Neon（本番DB）に接続できている（2026-08-17変更、旧VPS方針から置き換え）
